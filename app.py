@@ -69,6 +69,17 @@ st.write("Автоматично извличане на данни от фак�
 # Зареждане на данните от вградената база
 df = pd.read_csv(DB_FILE, dtype={"Номер": str})
 
+# АВТОМАТИЧНО СОРТИРАНЕ ПО ДАТА И СЛЕД ТОВА ПО НОМЕР
+if not df.empty:
+    # Създаваме временна колона за реална дата, за да сортира правилно (а не като обикновен текст)
+    df['temp_date'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y', errors='coerce')
+    # Сортиране по дата (възходящо) и след това по номер
+    df = df.sort_values(by=['temp_date', 'Номер'], ascending=[True, True])
+    # Премахваме временната колона, за да не грози таблицата
+    df = df.drop(columns=['temp_date'])
+    # Записваме сортирания масив, за да се пази подреден и в базата
+    df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
+
 # СЕКЦИЯ 1: КАЧВАНЕ НА НОВИ ФАКТУРИ
 st.sidebar.header("📁 Качване на нови документи")
 uploaded_file = st.sidebar.file_uploader("Пуснете PDF фактура тук:", type=["pdf"])
@@ -123,7 +134,6 @@ if not df.empty:
     st.dataframe(filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]], use_container_width=True, hide_index=True)
     
     # БУТОН ЗА ИЗТЕГЛЯНЕ НА ДАННИТЕ В EXCEL (САМО ПРИ НУЖДА)
-    # Конвертиране на текущата таблица в Excel формат в паметта
     try:
         import io
         towrite = io.BytesIO()
@@ -140,6 +150,7 @@ if not df.empty:
 
     # Бърза форма за промяна на Падеж и Статус под таблицата
     st.subheader("✏️ Бърза промяна на Падеж или Статус")
+    # Подреждаме и списъка за избор, за да му е по-лесно да намира фактурите
     invoice_to_edit = st.selectbox("Изберете номер на фактура за редактиране:", df["Номер"].tolist())
     
     if invoice_to_edit:
