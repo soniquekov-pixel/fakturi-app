@@ -20,7 +20,6 @@ FORM_ENTRIES = {
 # --- 2. ДВУЕЗИЧЕН АЛГОРИТЪМ ЗА ИЗВЛИЧАНЕ НА ДАННИ ОТ БИЗНЕС НАВИГАТОР ---
 def extract_invoice_data(file_bytes):
     with pdfplumber.open(file_bytes) as pdf:
-        # Поправка: Взимаме текста точно от първата страница [0]
         if len(pdf.pages) > 0:
             page_text = pdf.pages[0].extract_text()
         else:
@@ -113,7 +112,6 @@ if uploaded_file is not None:
             extracted_data = extract_invoice_data(uploaded_file)
             
             if extracted_data and extracted_data["Номер"] != "Не е намерен":
-                
                 # --- ПРОВЕРКА ЗА ДУБЛИРАНЕ ---
                 existing_numbers = df["Номер"].astype(str).tolist()
                 current_number = str(extracted_data["Номер"])
@@ -125,7 +123,7 @@ if uploaded_file is not None:
                         is_duplicate = True
                 
                 if is_duplicate:
-                    st.sidebar.warning(f"⚠️ Внимание! Фактура №{current_number} за клиент '{extracted_data['Клиент']}' вече съществува в дневника!")
+                    st.sidebar.warning(f"⚠️ Внимание! Фактура №{current_number} за клиент '{extracted_data['Клиент']}' вече съществува in дневника!")
                 else:
                     success = send_to_google_form(extracted_data)
                     if success:
@@ -143,24 +141,17 @@ col1, col2 = st.columns(2)
 
 with col1:
     unique_clients = ["Всички"] + sorted(df["Клиент"].dropna().unique().tolist())
-    selected_client = st.selectbox("🔍 Филтър по ...", unique_clients, key="client_select")
+    selected_client = st.selectbox("🔍 Филтър по Клиент:", unique_clients, key="client_select")
     
 with col2:
     status_options = ["Всички", "Платена", "Неплатена"]
-    selected_status = st.selectbox("🔔 Филтър по ...", status_options, key="status_select")
+    selected_status = st.selectbox("🔔 Филтър по Статус:", status_options, key="status_select")
     
 filtered_df = df.copy()
 if selected_client != "Всички":
     filtered_df = filtered_df[filtered_df["Клиент"] == selected_client]
 if selected_status != "Всички":
     filtered_df = filtered_df[filtered_df["Статус"] == selected_status]
-    
-st.dataframe(
-    filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]], 
-    use_container_width=True,
-    hide_index=True
-)
-    filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]], 
-    use_container_width=True,
-    hide_index=True
-)
+
+# Показване на таблицата с правилно подравняване
+st.dataframe(filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]], use_container_width=True, hide_index=True)
