@@ -6,6 +6,7 @@ import re
 
 # --- 1. ТЕХНИЧЕСКИ НАСТРОЙКИ (КОДОВЕ НА ВАШИТЕ ГУГЪЛ ЛИНКОВЕ) ---
 GOOGLE_SHEET_URL = "https://google.com"
+# Оптимизиран и директен адрес за изпращане на данни към Google Форми
 GOOGLE_FORM_SUBMIT_URL = "https://google.com"
 
 FORM_ENTRIES = {
@@ -75,19 +76,17 @@ def send_to_google_form(data):
         FORM_ENTRIES["Падеж"]: data["Падеж"],
         FORM_ENTRIES["Статус"]: data["Статус"]
     }
-    headers = {
-        "Referer": "https://google.com",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-    response = requests.post(GOOGLE_FORM_SUBMIT_URL, data=form_data, headers=headers)
     
-    # Поправка: Проверяваме правилно дали статус кодът е успешен (200 или 302)
-    success = response.status_code in [200, 302]
+    # Стандартно изпращане без излишни хедъри, за да не се бърка Google
+    response = requests.post(GOOGLE_FORM_SUBMIT_URL, data=form_data)
+    
+    # Google Forms връща код 200 при успешна обработка на уеб заявка
+    success = response.status_code == 200
     return success, response.status_code
 
 # --- 4. ИНТЕРФЕЙС НА УЕБ САЙТА (STREAMLIT) ---
 st.set_page_config(page_title="Дневник Фактури", layout="wide")
-st.title("📊 Споделен online дневник за фактури")
+st.title("📊 Споделен онлайн дневник за фактури")
 st.write("Система за автоматично извличане на данни от фактури и проследяване на падежи.")
 
 # Зареждане на данните
@@ -160,4 +159,4 @@ if selected_client != "Всички":
 if selected_status != "Всички":
     filtered_df = filtered_df[filtered_df["Статус"] == selected_status]
 
-st.dataframe(filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]], use_container_width=True, hide_index=True)
+st.dataframe(filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]],
