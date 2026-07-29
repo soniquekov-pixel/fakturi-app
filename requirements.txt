@@ -1,0 +1,3 @@
+textstreamlit
+pdfplumber
+pandas
