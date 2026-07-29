@@ -1,3 +1,3 @@
-textstreamlit
+streamlit
 pdfplumber
 pandas
