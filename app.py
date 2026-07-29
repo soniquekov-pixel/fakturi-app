@@ -89,7 +89,7 @@ if uploaded_file is not None:
                         is_duplicate = True
                 
                 if is_duplicate:
-                    st.sidebar.warning(f"⚠️ Фактура №{current_number} за този клиент вече съществува!")
+                    st.sidebar.warning(f"⚠️ Внимание! Фактура №{current_number} за този клиент вече съществува!")
                 else:
                     # Записване в локалния CSV файл
                     new_row = pd.DataFrame([extracted_data])
@@ -100,7 +100,7 @@ if uploaded_file is not None:
             else:
                 st.sidebar.error("Неуспешно разчитане на PDF файла.")
 
-# СЕКЦИЯ 2: УПРАВЛЕНИЕ И РЕДАКЦИЯ НА ПАДЕЖИ И СТАТУС директно от сайта
+# СЕКЦИЯ 2: УПРАВЛЕНИЕ И РЕДАКЦИЯ НА ПАДЕЖИ И СТАТУС
 st.header("📋 Списък с обработени фактури")
 
 if not df.empty:
@@ -122,18 +122,34 @@ if not df.empty:
     # Показване на таблицата
     st.dataframe(filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]], use_container_width=True, hide_index=True)
     
+    # БУТОН ЗА ИЗТЕГЛЯНЕ НА ДАННИТЕ В EXCEL (САМО ПРИ НУЖДА)
+    # Конвертиране на текущата таблица в Excel формат в паметта
+    try:
+        import io
+        towrite = io.BytesIO()
+        df.to_excel(towrite, index=False, header=True, engine='openpyxl')
+        towrite.seek(0)
+        st.download_button(
+            label="📥 Изтегли целия дневник в Excel файл",
+            data=towrite,
+            file_name="Dnevnik_Fakturi_Backup.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception:
+        pass
+
     # Бърза форма за промяна на Падеж и Статус под таблицата
     st.subheader("✏️ Бърза промяна на Падеж или Статус")
     invoice_to_edit = st.selectbox("Изберете номер на фактура за редактиране:", df["Номер"].tolist())
     
     if invoice_to_edit:
-        idx = df[df["Номер"] == invoice_to_edit].index[0]
+        idx = df[df["Номер"] == invoice_to_edit].index
         
         col_edit1, col_edit2 = st.columns(2)
         with col_edit1:
-            new_pad_date = st.text_input("Въведете Падеж (напр. 15.08.2026):", value=str(df.loc[idx, "Падеж"]))
+            new_pad_date = st.text_input("Въведете Падеж (напр. 15.08.2026):", value=str(df.loc[idx[0], "Падеж"]))
         with col_edit2:
-            current_st = df.loc[idx, "Status" if "Status" in df.columns else "Статус"]
+            current_st = df.loc[idx[0], "Статус"]
             st_idx = 0 if current_st == "Неплатена" else 1
             new_st = st.selectbox("Статус на плащане:", ["Неплатена", "Платена"], index=st_idx)
             
