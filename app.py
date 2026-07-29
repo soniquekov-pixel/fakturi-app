@@ -75,8 +75,14 @@ def send_to_google_form(data):
         FORM_ENTRIES["Падеж"]: data["Падеж"],
         FORM_ENTRIES["Статус"]: data["Статус"]
     }
-    response = requests.post(GOOGLE_FORM_SUBMIT_URL, data=form_data)
-    return response.status_code == 200
+    # Добавяме браузърни заглавия, за да не ни блокира Google
+    headers = {
+        "Referer": "https://google.com",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    response = requests.post(GOOGLE_FORM_SUBMIT_URL, data=form_data, headers=headers)
+    # Връща статус кода и дали е успешно (Google връща 200 или 302 при успешен запис на форма)
+    return response.status_code in, response.status_code
 
 # --- 4. ИНТЕРФЕЙС НА УЕБ САЙТА (STREAMLIT) ---
 st.set_page_config(page_title="Дневник Фактури", layout="wide")
@@ -123,14 +129,14 @@ if uploaded_file is not None:
                         is_duplicate = True
                 
                 if is_duplicate:
-                    st.sidebar.warning(f"⚠️ Внимание! Фактура №{current_number} за клиент '{extracted_data['Клиент']}' вече съществува in дневника!")
+                    st.sidebar.warning(f"⚠️ Внимание! Фактура №{current_number} за клиент '{extracted_data['Клиент']}' вече съществува в дневника!")
                 else:
-                    success = send_to_google_form(extracted_data)
+                    success, status_code = send_to_google_form(extracted_data)
                     if success:
                         st.sidebar.success(f"✅ Фактура №{extracted_data['Номер']} е записана успешно!")
                         st.rerun()
                     else:
-                        st.sidebar.error("Възникна грешка при записа в Google Sheets.")
+                        st.sidebar.error(f"Възникна грешка при записа в Google Sheets (Код: {status_code}).")
             else:
                 st.sidebar.error("Неуспешно разчитане. Моля, проверете дали PDF файлът има текстов слой.")
 
@@ -153,5 +159,5 @@ if selected_client != "Всички":
 if selected_status != "Всички":
     filtered_df = filtered_df[filtered_df["Статус"] == selected_status]
 
-# Показване на таблицата с правилно подравняване
+# Показване на таблицата
 st.dataframe(filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]], use_container_width=True, hide_index=True)
