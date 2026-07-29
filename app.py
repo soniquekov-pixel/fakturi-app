@@ -20,7 +20,7 @@ FORM_ENTRIES = {
 # --- 2. ДВУЕЗИЧЕН АЛГОРИТЪМ ЗА ИЗВЛИЧАНЕ НА ДАННИ ОТ БИЗНЕС НАВИГАТОР ---
 def extract_invoice_data(file_bytes):
     with pdfplumber.open(file_bytes) as pdf:
-        page_text = pdf.pages[0].extract_text()
+        page_text = pdf.pages.extract_text()
         if not page_text:
             return None
         
@@ -82,15 +82,13 @@ st.write("Система за автоматично извличане на д�
 # Зареждане на данните
 try:
     df = pd.read_csv(GOOGLE_SHEET_URL)
-    # Почистване на заглавията на колоните от интервали и излишни знаци
     df.columns = [str(col).strip() for col in df.columns]
 except Exception:
     df = pd.DataFrame(columns=["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"])
 
-# Уверяваме се, че задължителните колони съществуват в таблицата, за да няма KeyError
+# Уверяваме се, че колоните съществуват
 for col_name in ["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]:
     if col_name not in df.columns:
-        # Търсим дали колоната съдържа това име (напр. "Клиент" е част от "Име на Клиент")
         found = False
         for actual_col in df.columns:
             if col_name.lower() in actual_col.lower():
@@ -108,20 +106,37 @@ if uploaded_file is not None:
     if st.sidebar.button("🚀 Извлечи и Запиши в Дневника"):
         with st.spinner("Разчитане на Бизнес Навигатор бланка..."):
             extracted_data = extract_invoice_data(uploaded_file)
+            
             if extracted_data and extracted_data["Номер"] != "Не е намерен":
-                success = send_to_google_form(extracted_data)
-                if success:
-                    st.sidebar.success(f" Фактура №{extracted_data['Номер']} е записана успешно!")
-                    st.rerun()
+                
+                # --- ПРОВЕРКА ЗА ДУБЛИРАНЕ ---
+                # Превръщаме номерата в текст, за да няма несъответствия тип число/текст
+                existing_numbers = df["Номер"].astype(str).tolist()
+                current_number = str(extracted_data["Номер"])
+                
+                # Ако номерът съществува, проверяваме дали е за същия клиент
+                is_duplicate = False
+                if current_number in existing_numbers:
+                    # Филтрираме редовете с този номер и гледаме клиента
+                    matched_rows = df[df["Номер"].astype(str) == current_number]
+                    if extracted_data["Клиент"] in matched_rows["Client" if "Client" in df.columns else "Клиент"].tolist():
+                        is_duplicate = True
+                
+                if is_duplicate:
+                    st.sidebar.warning(f"⚠️ Внимание! Фактура №{current_number} за клиент '{extracted_data['Клиент']}' вече съществува в дневника!")
                 else:
-                    st.sidebar.error("Възникна грешка при записа в Google Sheets.")
+                    success = send_to_google_form(extracted_data)
+                    if success:
+                        st.sidebar.success(f"✅ Фактура №{extracted_data['Номер']} е записана успешно!")
+                        st.rerun()
+                    else:
+                        st.sidebar.error("Възникна грешка при записа в Google Sheets.")
             else:
                 st.sidebar.error("Неуспешно разчитане. Моля, проверете дали PDF файлът има текстов слой.")
 
 # СЕКЦИЯ 2: ТАБЛИЦА С ДАННИ И ФИЛТРИ
 st.header("📋 Списък с обработени фактури")
 
-# Създаване на филтрите най-отгоре
 col1, col2 = st.columns(2)
 
 with col1:
@@ -130,16 +145,14 @@ with col1:
     
 with col2:
     status_options = ["Всички", "Платена", "Неплатена"]
-    selected_status = st.selectbox("🔔 Филтър по Статус:", status_options)
+    selected_status = st.selectbox("🔔 Филтър по Status:", status_options)
     
-# Прилагане на филтрите върху таблицата
 filtered_df = df.copy()
 if selected_client != "Всички":
     filtered_df = filtered_df[filtered_df["Клиент"] == selected_client]
 if selected_status != "Всички":
     filtered_df = filtered_df[filtered_df["Статус"] == selected_status]
     
-# Показване на филтрираната таблица на екрана
 st.dataframe(
     filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]], 
     use_container_width=True,
