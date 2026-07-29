@@ -6,7 +6,6 @@ import re
 
 # --- 1. ТЕХНИЧЕСКИ НАСТРОЙКИ (КОДОВЕ НА ВАШИТЕ ГУГЪЛ ЛИНКОВЕ) ---
 GOOGLE_SHEET_URL = "https://google.com"
-# Оптимизиран и директен адрес за изпращане на данни към Google Форми
 GOOGLE_FORM_SUBMIT_URL = "https://google.com"
 
 FORM_ENTRIES = {
@@ -77,11 +76,9 @@ def send_to_google_form(data):
         FORM_ENTRIES["Статус"]: data["Статус"]
     }
     
-    # Стандартно изпращане без излишни хедъри, за да не се бърка Google
     response = requests.post(GOOGLE_FORM_SUBMIT_URL, data=form_data)
-    
-    # Google Forms връща код 200 при успешна обработка на уеб заявка
-    success = response.status_code == 200
+    # Поправка: Проверяваме правилно за статус код 200 или 302
+    success = response.status_code in [200, 302]
     return success, response.status_code
 
 # --- 4. ИНТЕРФЕЙС НА УЕБ САЙТА (STREAMLIT) ---
@@ -159,4 +156,4 @@ if selected_client != "Всички":
 if selected_status != "Всички":
     filtered_df = filtered_df[filtered_df["Статус"] == selected_status]
 
-st.dataframe(filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]],
+st.dataframe(filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]], use_container_width=True, hide_index=True)
