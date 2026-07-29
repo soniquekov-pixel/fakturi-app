@@ -20,7 +20,12 @@ FORM_ENTRIES = {
 # --- 2. ДВУЕЗИЧЕН АЛГОРИТЪМ ЗА ИЗВЛИЧАНЕ НА ДАННИ ОТ БИЗНЕС НАВИГАТОР ---
 def extract_invoice_data(file_bytes):
     with pdfplumber.open(file_bytes) as pdf:
-        page_text = pdf.pages.extract_text()
+        # Поправка: Взимаме текста точно от първата страница [0]
+        if len(pdf.pages) > 0:
+            page_text = pdf.pages[0].extract_text()
+        else:
+            return None
+            
         if not page_text:
             return None
         
@@ -110,16 +115,13 @@ if uploaded_file is not None:
             if extracted_data and extracted_data["Номер"] != "Не е намерен":
                 
                 # --- ПРОВЕРКА ЗА ДУБЛИРАНЕ ---
-                # Превръщаме номерата в текст, за да няма несъответствия тип число/текст
                 existing_numbers = df["Номер"].astype(str).tolist()
                 current_number = str(extracted_data["Номер"])
                 
-                # Ако номерът съществува, проверяваме дали е за същия клиент
                 is_duplicate = False
                 if current_number in existing_numbers:
-                    # Филтрираме редовете с този номер и гледаме клиента
                     matched_rows = df[df["Номер"].astype(str) == current_number]
-                    if extracted_data["Клиент"] in matched_rows["Client" if "Client" in df.columns else "Клиент"].tolist():
+                    if extracted_data["Клиент"] in matched_rows["Клиент"].tolist():
                         is_duplicate = True
                 
                 if is_duplicate:
@@ -141,11 +143,11 @@ col1, col2 = st.columns(2)
 
 with col1:
     unique_clients = ["Всички"] + sorted(df["Клиент"].dropna().unique().tolist())
-    selected_client = st.selectbox("🔍 Филтър по Клиент:", unique_clients)
+    selected_client = st.selectbox("🔍 Филтър по ...", unique_clients, key="client_select")
     
 with col2:
     status_options = ["Всички", "Платена", "Неплатена"]
-    selected_status = st.selectbox("🔔 Филтър по Status:", status_options)
+    selected_status = st.selectbox("🔔 Филтър по ...", status_options, key="status_select")
     
 filtered_df = df.copy()
 if selected_client != "Всички":
@@ -154,6 +156,10 @@ if selected_status != "Всички":
     filtered_df = filtered_df[filtered_df["Статус"] == selected_status]
     
 st.dataframe(
+    filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]], 
+    use_container_width=True,
+    hide_index=True
+)
     filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]], 
     use_container_width=True,
     hide_index=True
