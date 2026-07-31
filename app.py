@@ -23,7 +23,7 @@ if not st.session_state["authenticated"]:
             st.error("❌ Грешна парола! Опитайте отново.")
     st.stop()
 
-# ИМЕТО НА ФАЙЛА, В КОЙТО ВЕЧЕ ИМА СВАЛЕНИТЕ ДАННИ
+# ИМЕТО НА ФАЙЛА С БАЗАТА ДАННИ
 DB_FILE = "dnevnik_fakturi.csv"
 
 # Инициализиране, ако не съществува
@@ -32,7 +32,7 @@ if not os.path.exists(DB_FILE):
     df_init.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
 
 # Зареждане на данните
-df = pd.read_csv(DB_FILE, dtype={"Номер": str, "Падеж": str})
+df = pd.read_csv(DB_FILE, dtype={"Номер": str, "Падеж": str, "Сума": str})
 
 # Автоматично хронологично сортиране (водещо по Дата на фактурата)
 if not df.empty:
@@ -40,7 +40,7 @@ if not df.empty:
     df = df.sort_values(by=['temp_date', 'Номер'], ascending=[True, True])
     df = df.drop(columns=['temp_date'])
 
-# --- 2. ДВУЕЗИЧЕН АЛГОРИТЪМ ЗА ИЗВЛИЧАНЕ НА ДАННИ ОТ БИЗНЕС НАВИГАТОР ---
+# --- 2. ИНТЕЛИГЕНТЕН ДВУЕЗИЧЕН АЛГОРИТЪМ ЗА ИЗВЛИЧАНЕ ---
 def extract_invoice_data(file_bytes):
     with pdfplumber.open(file_bytes) as pdf:
         if len(pdf.pages) > 0:
@@ -51,7 +51,7 @@ def extract_invoice_data(file_bytes):
         if not page_text:
             return None
         
-        lines = [line.strip() for line in page_text.split('\n')]
+        lines = [line.strip() for line in page_text.split('\n') if line.strip()]
         invoice_number = "Не е намерен"
         invoice_date = "Не е намерена"
         invoice_client = "Не е намерен"
@@ -67,17 +67,20 @@ def extract_invoice_data(file_bytes):
                 next_line = lines[i + 1]
                 if next_line and "адрес:" not in next_line.lower():
                     invoice_client = next_line
-            if "сума за плащане:" in line_lower:
-                invoice_amount = line.split(":")[-1].strip() + " EUR"
-            elif line_lower.startswith("всичко ") and invoice_amount == "Не е намерена":
-                invoice_amount = line.split()[-1].strip() + " EUR"
+            
+            # Търсене на Сума БГ (всичко за плащане, сума за плащане)
+            if "плащане" in line_lower or line_lower.startswith("всичко"):
+                invoice_amount = line.split()[-1].strip()
                 
-            match_en = re.search(r'total\s+costs?[\s\:]+(.*)', line_lower)
-            if match_en:
-                start_idx = line_lower.find(match_en.group(1))
-                invoice_amount = line[start_idx:].strip()
-                if "eur" not in invoice_amount.lower():
-                    invoice_amount += " EUR"
+            # Гъвкаво търсене на Сума АНГ (хваща тотал кост, костс или само тотал на реда със сумата)
+            if "total" in line_lower and any(num in line_lower for num in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]):
+                # Взимаме последната дума от реда, която е самото число
+                invoice_amount = line.split()[-1].strip()
+
+        # Почистване на сумата
+        invoice_amount = invoice_amount.replace(":", "").strip()
+        if invoice_amount != "Не е намерена" and "eur" not in invoice_amount.lower() and "лв" not in invoice_amount.lower():
+            invoice_amount += " EUR"
 
         return {
             "Номер": invoice_number,
@@ -129,9 +132,9 @@ if not df.empty:
     f1, f2, f3, f4 = st.columns(4)
     with f1:
         unique_clients = ["Всички"] + sorted(df["Клиент"].dropna().unique().tolist())
-        selected_client = st.selectbox("🔍 Филтър по Клиент:", unique_clients, key="client_select")
+        selected_client = st.selectbox("🔍 Филтър по ...", unique_clients, key="client_select")
     with f2:
-        selected_status = st.selectbox("🔔 Филтър по Статус:", ["Всички", "Платена", "Неплатена"], key="status_select")
+        selected_status = st.selectbox("🔔 Филтър по ...", ["Всички", "Платена", "Неплатена"], key="status_select")
     with f3:
         start_pad = st.date_input("📅 Падеж от:", value=None)
     with f4:
@@ -170,29 +173,32 @@ if not df.empty:
         st.download_button(label="📥 Изтегли целия дневник в Excel файл", data=towrite, file_name="Dnevnik_Fakturi_Backup.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     except Exception: pass
 
-    st.subheader("✏️ Бърза промяна на Падеж или Статус")
+    # РЕДАКЦИЯ НА ПАДЕЖ, СТАТУС И СУМА
+    st.subheader("✏️ Бърза промяна на данни (Сума / Падеж / Статус)")
     invoice_to_edit = st.selectbox("Изберете номер на фактура за редактиране:", df["Номер"].tolist())
     
     if invoice_to_edit:
         idx = df[df["Номер"] == invoice_to_edit].index
         
-        col_edit1, col_edit2 = st.columns(2)
+        col_edit1, col_edit2, col_edit3 = st.columns(3)
         with col_edit1:
+            current_amount = str(df.loc[idx, "Сума"].values[0])
+            new_amount = st.text_input("Сума (напр. 800.00 EUR):", value=current_amount, key=f"amount_{invoice_to_edit}")
+        with col_edit2:
             current_pad_str = str(df.loc[idx, "Падеж"].values[0])
             try:
                 default_date = datetime.strptime(current_pad_str, "%d.%m.%Y").date()
             except ValueError:
                 default_date = datetime.today().date()
-                
-            new_pad_date_obj = st.date_input("Изберете Падеж от календара:", value=default_date, key=f"pad_date_{invoice_to_edit}")
+            new_pad_date_obj = st.date_input("Падеж от календара:", value=default_date, key=f"pad_date_{invoice_to_edit}")
             new_pad_date = new_pad_date_obj.strftime("%d.%m.%Y")
-            
-        with col_edit2:
-            current_st = df.loc[idx, "Статус"].values[0]
+        with col_edit3:
+            current_st = str(df.loc[idx, "Статус"].values[0])
             st_idx = 0 if current_st == "Неплатена" else 1
             new_st = st.selectbox("Статус на плащане:", ["Неплатена", "Платена"], index=st_idx, key=f"status_select_{invoice_to_edit}")
             
         if st.button("💾 Запази промените", key="save_btn"):
+            df.loc[idx, "Сума"] = new_amount
             df.loc[idx, "Падеж"] = new_pad_date
             df.loc[idx, "Статус"] = new_st
             df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
