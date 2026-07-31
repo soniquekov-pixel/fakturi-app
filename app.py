@@ -40,11 +40,11 @@ if not df.empty:
     df = df.sort_values(by=['temp_date', 'Номер'], ascending=[True, True])
     df = df.drop(columns=['temp_date'])
 
-# --- 2. ИНТЕЛИГЕНТЕН ДВУЕЗИЧЕН АЛГОРИТЪМ ЗА ИЗВЛИЧАНЕ ---
+# --- 2. СУПЕР ГЪВКАВ АЛГОРИТЪМ СЪС ЗАЩИТА ЗА НОВ РЕД ---
 def extract_invoice_data(file_bytes):
     with pdfplumber.open(file_bytes) as pdf:
         if len(pdf.pages) > 0:
-            page_text = pdf.pages[0].extract_text()
+            page_text = pdf.pages.extract_text()
         else:
             return None
             
@@ -72,12 +72,22 @@ def extract_invoice_data(file_bytes):
             if "плащане" in line_lower or line_lower.startswith("всичко"):
                 invoice_amount = line.split()[-1].strip()
                 
-            # Гъвкаво търсене на Сума АНГ (хваща тотал кост, костс или само тотал на реда със сумата)
-            if "total" in line_lower and any(num in line_lower for num in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]):
-                # Взимаме последната дума от реда, която е самото число
-                invoice_amount = line.split()[-1].strip()
+            # Защита за АНГ бланки: Търсим ключова дума 'total' или 'cost'
+            if "total" in line_lower or "cost" in line_lower:
+                # Проверяваме дали на този ред има цифри
+                words = line.split()
+                last_word = words[-1].strip()
+                # Ако последната дума съдържа цифра, това е сумата
+                if any(char.isdigit() for char in last_word):
+                    invoice_amount = last_word
+                else:
+                    # АКО СУМАТА Е ПАДНАЛА НА СЛЕДВАЩИЯ РЕД (Вашият случай!)
+                    if (i + 1) < len(lines):
+                        next_line_words = lines[i + 1].split()
+                        if next_line_words:
+                            invoice_amount = next_line_words[-1].strip()
 
-        # Почистване на сумата
+        # Крайно изчистване на символи
         invoice_amount = invoice_amount.replace(":", "").strip()
         if invoice_amount != "Не е намерена" and "eur" not in invoice_amount.lower() and "лв" not in invoice_amount.lower():
             invoice_amount += " EUR"
@@ -132,9 +142,9 @@ if not df.empty:
     f1, f2, f3, f4 = st.columns(4)
     with f1:
         unique_clients = ["Всички"] + sorted(df["Клиент"].dropna().unique().tolist())
-        selected_client = st.selectbox("🔍 Филтър по ...", unique_clients, key="client_select")
+        selected_client = st.selectbox("🔍 Филтър по Клиент:", unique_clients, key="client_select")
     with f2:
-        selected_status = st.selectbox("🔔 Филтър по ...", ["Всички", "Платена", "Неплатена"], key="status_select")
+        selected_status = st.selectbox("🔔 Филтър по Статус:", ["Всички", "Платена", "Неплатена"], key="status_select")
     with f3:
         start_pad = st.date_input("📅 Падеж от:", value=None)
     with f4:
