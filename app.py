@@ -5,6 +5,29 @@ import os
 import re
 from datetime import datetime
 
+# --- 0. ЗАЩИТА С ПАРОЛА ---
+# Проверяваме дали потребителят вече е въвел правилната парола
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    st.set_page_config(page_title="Вход - Дневник Фактури", layout="centered")
+    st.title("🔒 Заключена система")
+    st.write("Моля, въведете парола, за да достъпите споделения дневник за фактури.")
+    
+    # Поле за парола (въведените символи ще се виждат като точки за сигурност)
+    user_password = st.text_input("Парола:", type="password")
+    
+    if st.button("🚪 Вход"):
+        if user_password == "00000000":
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("❌ Грешна парола! Опитайте отново.")
+    st.stop() # Спира зареждането на останалата част от сайта, ако не е отключен
+
+# --- АКО ПАРОЛАТА Е ВЯРНА, СЕ ЗАРЕЖДА ОСТАНАЛАТА ЧАСТ ОТ САЙТА ---
+
 # Име на вградената база данни на сайта
 DB_FILE = "dnevnik_fakturi.csv"
 
@@ -110,30 +133,24 @@ if uploaded_file is not None:
 st.header("📋 Списък с обработени фактури")
 
 if not df.empty:
-    # Ограничаване на филтрите в 4 колони
     f1, f2, f3, f4 = st.columns(4)
     with f1:
         unique_clients = ["Всички"] + sorted(df["Клиент"].dropna().unique().tolist())
         selected_client = st.selectbox("🔍 Филтър по Клиент:", unique_clients, key="client_select")
     with f2:
         selected_status = st.selectbox("🔔 Филтър по Статус:", ["Всички", "Платена", "Неплатена"], key="status_select")
-    
-    # НОВО: Филтри за начална и крайна дата на ПАДЕЖА
     with f3:
         start_pad = st.date_input("📅 Падеж от:", value=None, help="Начална дата на падежа")
     with f4:
         end_pad = st.date_input("📅 Падеж до:", value=None, help="Крайна дата на падежа")
         
-    # Прилагане на филтрите
     filtered_df = df.copy()
     if selected_client != "Всички":
         filtered_df = filtered_df[filtered_df["Клиент"] == selected_client]
     if selected_status != "Всички":
         filtered_df = filtered_df[filtered_df["Статус"] == selected_status]
         
-    # Фидтриране по период на Падеж (ако са избрани дати)
     if start_pad or end_pad:
-        # Превръщаме временно колоната Падеж в реална дата за изчислението
         filtered_df['temp_pad_date'] = pd.to_datetime(filtered_df['Падеж'], format='%d.%m.%Y', errors='coerce')
         if start_pad:
             filtered_df = filtered_df[filtered_df['temp_pad_date'] >= pd.to_datetime(start_pad)]
@@ -141,22 +158,19 @@ if not df.empty:
             filtered_df = filtered_df[filtered_df['temp_pad_date'] <= pd.to_datetime(end_pad)]
         filtered_df = filtered_df.drop(columns=['temp_pad_date'])
 
-    # НОВО: ФУНКЦИЯ ЗА ОЦВЕТЯВАНЕ НА СТАТУСИТЕ (Червено за Неплатена, Зелено за Платена)
     def style_status(val):
         if val == "Неплатена":
-            return "color: #FF4B4B; font-weight: bold;"  # Червен текст
+            return "color: #FF4B4B; font-weight: bold;"
         elif val == "Платена":
-            return "color: #00D488; font-weight: bold;"  # Зелен текст
+            return "color: #00D488; font-weight: bold;"
         return ""
 
-    # Показване на красивата таблица с оцветени статуси
     st.dataframe(
         filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]].style.map(style_status, subset=["Статус"]), 
         use_container_width=True, 
         hide_index=True
     )
     
-    # БУТОН ЗА EXCEL
     try:
         import io
         towrite = io.BytesIO()
@@ -171,16 +185,14 @@ if not df.empty:
     except Exception:
         pass
 
-    # БЪРЗА ПРОМЯНА НА ПАДЕЖ И СТАТУС
     st.subheader("✏️ Бърза промяна на Падеж или Статус")
     invoice_to_edit = st.selectbox("Изберете номер на фактура за редактиране:", df["Номер"].tolist())
     
     if invoice_to_edit:
-        idx = df[df["Номер"] == invoice_to_edit].index[0]
+        idx = df[df["Номер"] == invoice_to_edit].index
         
         col_edit1, col_edit2 = st.columns(2)
         with col_edit1:
-            # НОВО: Вече избира падежа от истински календар за удобство, вместо да пише на ръка
             current_pad_str = str(df.loc[idx, "Падеж"])
             try:
                 default_date = datetime.strptime(current_pad_str, "%d.%m.%Y").date()
