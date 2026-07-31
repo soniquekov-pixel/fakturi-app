@@ -3,6 +3,7 @@ import pandas as pd
 import pdfplumber
 import os
 import re
+from datetime import datetime
 
 # Име на вградената база данни на сайта
 DB_FILE = "dnevnik_fakturi.csv"
@@ -67,17 +68,13 @@ st.title("📊 Споделен онлайн дневник за фактури"
 st.write("Автоматично извличане на данни от фактури на Бизнес Навигатор и управление на падежи.")
 
 # Зареждане на данните от вградената база
-df = pd.read_csv(DB_FILE, dtype={"Номер": str})
+df = pd.read_csv(DB_FILE, dtype={"Номер": str, "Падеж": str})
 
-# АВТОМАТИЧНО СОРТИРАНЕ ПО ДАТА И СЛЕД ТОВА ПО НОМЕР
+# Автоматично хронологично сортиране (водещо по Дата на фактурата)
 if not df.empty:
-    # Създаваме временна колона за реална дата, за да сортира правилно (а не като обикновен текст)
     df['temp_date'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y', errors='coerce')
-    # Сортиране по дата (възходящо) и след това по номер
     df = df.sort_values(by=['temp_date', 'Номер'], ascending=[True, True])
-    # Премахваме временната колона, за да не грози таблицата
     df = df.drop(columns=['temp_date'])
-    # Записваме сортирания масив, за да се пази подреден и в базата
     df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
 
 # СЕКЦИЯ 1: КАЧВАНЕ НА НОВИ ФАКТУРИ
@@ -92,7 +89,6 @@ if uploaded_file is not None:
             if extracted_data and extracted_data["Номер"] != "Не е намерен":
                 current_number = str(extracted_data["Номер"])
                 
-                # Проверка за дублиране във вътрешната база
                 is_duplicate = False
                 if not df.empty:
                     matched_rows = df[df["Номер"].astype(str) == current_number]
@@ -102,7 +98,6 @@ if uploaded_file is not None:
                 if is_duplicate:
                     st.sidebar.warning(f"⚠️ Внимание! Фактура №{current_number} за този клиент вече съществува!")
                 else:
-                    # Записване в локалния CSV файл
                     new_row = pd.DataFrame([extracted_data])
                     df = pd.concat([df, new_row], ignore_index=True)
                     df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
@@ -111,29 +106,57 @@ if uploaded_file is not None:
             else:
                 st.sidebar.error("Неуспешно разчитане на PDF файла.")
 
-# СЕКЦИЯ 2: УПРАВЛЕНИЕ И РЕДАКЦИЯ НА ПАДЕЖИ И СТАТУС
+# СЕКЦИЯ 2: УПРАВЛЕНИЕ И РЕДАКЦИЯ
 st.header("📋 Списък с обработени фактури")
 
 if not df.empty:
-    # Филтри най-отгоре
-    col1, col2 = st.columns(2)
-    with col1:
+    # Ограничаване на филтрите в 4 колони
+    f1, f2, f3, f4 = st.columns(4)
+    with f1:
         unique_clients = ["Всички"] + sorted(df["Клиент"].dropna().unique().tolist())
-        selected_client = st.selectbox("🔍 Филтър по Клиент:", unique_clients)
-    with col2:
-        selected_status = st.selectbox("🔔 Филтър по Статус:", ["Всички", "Платена", "Неплатена"])
+        selected_client = st.selectbox("🔍 Филтър по Клиент:", unique_clients, key="client_select")
+    with f2:
+        selected_status = st.selectbox("🔔 Филтър по Статус:", ["Всички", "Платена", "Неплатена"], key="status_select")
+    
+    # НОВО: Филтри за начална и крайна дата на ПАДЕЖА
+    with f3:
+        start_pad = st.date_input("📅 Падеж от:", value=None, help="Начална дата на падежа")
+    with f4:
+        end_pad = st.date_input("📅 Падеж до:", value=None, help="Крайна дата на падежа")
         
-    # Прилагане на филтрите за визуализация
+    # Прилагане на филтрите
     filtered_df = df.copy()
     if selected_client != "Всички":
         filtered_df = filtered_df[filtered_df["Клиент"] == selected_client]
     if selected_status != "Всички":
         filtered_df = filtered_df[filtered_df["Статус"] == selected_status]
         
-    # Показване на таблицата
-    st.dataframe(filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]], use_container_width=True, hide_index=True)
+    # Фидтриране по период на Падеж (ако са избрани дати)
+    if start_pad or end_pad:
+        # Превръщаме временно колоната Падеж в реална дата за изчислението
+        filtered_df['temp_pad_date'] = pd.to_datetime(filtered_df['Падеж'], format='%d.%m.%Y', errors='coerce')
+        if start_pad:
+            filtered_df = filtered_df[filtered_df['temp_pad_date'] >= pd.to_datetime(start_pad)]
+        if end_pad:
+            filtered_df = filtered_df[filtered_df['temp_pad_date'] <= pd.to_datetime(end_pad)]
+        filtered_df = filtered_df.drop(columns=['temp_pad_date'])
+
+    # НОВО: ФУНКЦИЯ ЗА ОЦВЕТЯВАНЕ НА СТАТУСИТЕ (Червено за Неплатена, Зелено за Платена)
+    def style_status(val):
+        if val == "Неплатена":
+            return "color: #FF4B4B; font-weight: bold;"  # Червен текст
+        elif val == "Платена":
+            return "color: #00D488; font-weight: bold;"  # Зелен текст
+        return ""
+
+    # Показване на красивата таблица с оцветени статуси
+    st.dataframe(
+        filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]].style.map(style_status, subset=["Статус"]), 
+        use_container_width=True, 
+        hide_index=True
+    )
     
-    # БУТОН ЗА ИЗТЕГЛЯНЕ НА ДАННИТЕ В EXCEL (САМО ПРИ НУЖДА)
+    # БУТОН ЗА EXCEL
     try:
         import io
         towrite = io.BytesIO()
@@ -148,23 +171,31 @@ if not df.empty:
     except Exception:
         pass
 
-    # Бърза форма за промяна на Падеж и Статус под таблицата
+    # БЪРЗА ПРОМЯНА НА ПАДЕЖ И СТАТУС
     st.subheader("✏️ Бърза промяна на Падеж или Статус")
-    # Подреждаме и списъка за избор, за да му е по-лесно да намира фактурите
     invoice_to_edit = st.selectbox("Изберете номер на фактура за редактиране:", df["Номер"].tolist())
     
     if invoice_to_edit:
-        idx = df[df["Номер"] == invoice_to_edit].index
+        idx = df[df["Номер"] == invoice_to_edit].index[0]
         
         col_edit1, col_edit2 = st.columns(2)
         with col_edit1:
-            new_pad_date = st.text_input("Въведете Падеж (напр. 15.08.2026):", value=str(df.loc[idx[0], "Падеж"]))
-        with col_edit2:
-            current_st = df.loc[idx[0], "Статус"]
-            st_idx = 0 if current_st == "Неплатена" else 1
-            new_st = st.selectbox("Статус на плащане:", ["Неплатена", "Платена"], index=st_idx)
+            # НОВО: Вече избира падежа от истински календар за удобство, вместо да пише на ръка
+            current_pad_str = str(df.loc[idx, "Падеж"])
+            try:
+                default_date = datetime.strptime(current_pad_str, "%d.%m.%Y").date()
+            except ValueError:
+                default_date = datetime.today().date()
+                
+            new_pad_date_obj = st.date_input("Изберете Падеж от календара:", value=default_date, key=f"pad_date_{invoice_to_edit}")
+            new_pad_date = new_pad_date_obj.strftime("%d.%m.%Y")
             
-        if st.button("💾 Запази промените"):
+        with col_edit2:
+            current_st = df.loc[idx, "Статус"]
+            st_idx = 0 if current_st == "Неплатена" else 1
+            new_st = st.selectbox("Статус на плащане:", ["Неплатена", "Платена"], index=st_idx, key=f"status_select_{invoice_to_edit}")
+            
+        if st.button("💾 Запази промените", key="save_btn"):
             df.loc[idx, "Падеж"] = new_pad_date
             df.loc[idx, "Статус"] = new_st
             df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
