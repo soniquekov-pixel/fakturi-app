@@ -1,9 +1,12 @@
 import streamlit as st
 import pandas as pd
 import pdfplumber
-import json
+import os
 import re
 from datetime import datetime
+
+# Име на вечния файл, който току-що качихте в GitHub
+DB_FILE = "база_данни.csv"
 
 # --- 0. ЗАЩИТА С ПАРОЛА ---
 if "authenticated" not in st.session_state:
@@ -23,29 +26,24 @@ if not st.session_state["authenticated"]:
             st.error("❌ Грешна парола! Опитайте отново.")
     st.stop()
 
-# --- 1. СВЪРЗВАНЕ С ВЕЧНИЯ ОНЛАЙН СЕЙФ ---
-# Проверяваме дали уеб сейфът на Streamlit е активиран в настройките
-if "database" not in st.secrets:
-    st.set_page_config(page_title="Грешка при настройка", layout="centered")
-    st.error("⚠️ Моля, активирайте уеб сейфа от менюто Manage App -> Settings -> Secrets първо!")
+# Проверка дали файлът съществува
+if not os.path.exists(DB_FILE):
+    st.error(f"⚠️ Грешка: Файлът '{DB_FILE}' не е намерен в GitHub! Моля, проверете името му.")
     st.stop()
 
-# Използваме постоянната памет на Streamlit Cloud за съхранение на списъка
-if "db_store" not in st.runtime.secrets.get_file_contents:
-    if "global_invoices" not in st.experimental_singleton if hasattr(st, "experimental_singleton") else st.session_state:
-        st.session_state["global_invoices"] = []
+# Зареждане на данните директно от качения CSV файл
+df = pd.read_csv(DB_FILE, dtype={"Номер": str, "Падеж": str, "Сума": str})
 
-# Зареждане на масива
-invoice_list = st.session_state.get("global_invoices", [])
-df = pd.DataFrame(invoice_list, columns=["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"])
+# Почистване на заглавията на колоните за всеки случай
+df.columns = [str(col).strip() for col in df.columns]
 
 # Автоматично хронологично сортиране (водещо по Дата на фактурата)
-if not df.empty:
+if not df.empty and "Дата" in df.columns:
     df['temp_date'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y', errors='coerce')
     df = df.sort_values(by=['temp_date', 'Номер'], ascending=[True, True])
     df = df.drop(columns=['temp_date'])
 
-# --- 2. ДВУЕЗИЧЕН АЛГОРИТЪМ ЗА ИЗВЛИЧАНЕ ОТ БИЗНЕС НАВИГАТОР ---
+# --- 2. ДВУЕЗИЧЕН АЛГОРИТЪМ ЗА ИЗВЛИЧАНЕ ОСТАВА СЪЩИЯ ---
 def extract_invoice_data(file_bytes):
     with pdfplumber.open(file_bytes) as pdf:
         if len(pdf.pages) > 0:
@@ -93,7 +91,7 @@ def extract_invoice_data(file_bytes):
 # --- 3. ИНТЕРФЕЙС НА УЕБ САЙТА ---
 st.set_page_config(page_title="Дневник Фактури", layout="wide")
 st.title("📊 Споделен онлайн дневник за фактури")
-st.write("Система с постоянна онлайн база данни и автоматично разчитане на фактури.")
+st.write("Система за автоматично извличане на данни от фактури и управление на падежи.")
 
 # СЕКЦИЯ 1: КАЧВАНЕ НА НОВИ ФАКТУРИ
 st.sidebar.header("📁 Качване на нови документи")
@@ -108,7 +106,7 @@ if uploaded_file is not None:
                 current_number = str(extracted_data["Номер"])
                 
                 is_duplicate = False
-                if not df.empty:
+                if not df.empty and "Номер" in df.columns:
                     matched_rows = df[df["Номер"].astype(str) == current_number]
                     if extracted_data["Клиент"] in matched_rows["Клиент"].tolist():
                         is_duplicate = True
@@ -116,22 +114,28 @@ if uploaded_file is not None:
                 if is_duplicate:
                     st.sidebar.warning(f"⚠️ Внимание! Фактура №{current_number} за този клиент вече съществува!")
                 else:
-                    st.session_state["global_invoices"].append(extracted_data)
-                    st.sidebar.success(f"✅ Фактура №{current_number} е записана вечно!")
+                    new_row = pd.DataFrame([extracted_data])
+                    df = pd.concat([df, new_row], ignore_index=True)
+                    df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
+                    st.sidebar.success(f"✅ Фактура №{current_number} е записана успешно!")
                     st.rerun()
-            else:
-                st.sidebar.error("Неуспешно разчитане на PDF файла.")
 
 # СЕКЦИЯ 2: УПРАВЛЕНИЕ И РЕДАКЦИЯ
 st.header("📋 Списък с обработени фактури")
+
+# Защита на списъка с колони за изобразяване
+available_cols = ["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]
+for col in available_cols:
+    if col not in df.columns:
+        df[col] = "-"
 
 if not df.empty:
     f1, f2, f3, f4 = st.columns(4)
     with f1:
         unique_clients = ["Всички"] + sorted(df["Клиент"].dropna().unique().tolist())
-        selected_client = st.selectbox("🔍 Филтър по Клиент:", unique_clients, key="client_select")
+        selected_client = st.selectbox("🔍 Филтър по Клиент:", unique_clients)
     with f2:
-        selected_status = st.selectbox("🔔 Филтър по Статус:", ["Всички", "Платена", "Неплатена"], key="status_select")
+        selected_status = st.selectbox("🔔 Филтър по Статус:", ["Всички", "Платена", "Неплатена"])
     with f3:
         start_pad = st.date_input("📅 Падеж от:", value=None)
     with f4:
@@ -154,7 +158,7 @@ if not df.empty:
         elif val == "Платена": return "color: #00D488; font-weight: bold;"
         return ""
 
-    st.dataframe(filtered_df[["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]].style.map(style_status, subset=["Статус"]), use_container_width=True, hide_index=True)
+    st.dataframe(filtered_df[available_cols].style.map(style_status, subset=["Статус"]), use_container_width=True, hide_index=True)
     
     try:
         import io
@@ -168,26 +172,29 @@ if not df.empty:
     invoice_to_edit = st.selectbox("Изберете номер на фактура за редактиране:", df["Номер"].tolist())
     
     if invoice_to_edit:
-        idx = next(i for i, item in enumerate(st.session_state["global_invoices"]) if str(item["Номер"]) == str(invoice_to_edit))
-        item = st.session_state["global_invoices"][idx]
+        idx = df[df["Номер"] == invoice_to_edit].index
         
         col_edit1, col_edit2, col_edit3 = st.columns(3)
         with col_edit1:
-            new_amount = st.text_input("Сума:", value=str(item["Сума"]), key=f"amount_{invoice_to_edit}")
+            current_amount = str(df.loc[idx, "Сума"].values[0]) if len(df.loc[idx, "Сума"]) > 0 else "-"
+            new_amount = st.text_input("Сума:", value=current_amount, key=f"amount_{invoice_to_edit}")
         with col_edit2:
-            try: default_date = datetime.strptime(str(item["Падеж"]), "%d.%m.%Y").date()
+            current_pad_str = str(df.loc[idx, "Падеж"].values[0]) if len(df.loc[idx, "Падеж"]) > 0 else "-"
+            try: default_date = datetime.strptime(current_pad_str, "%d.%m.%Y").date()
             except ValueError: default_date = datetime.today().date()
             new_pad_date_obj = st.date_input("Падеж от календара:", value=default_date, key=f"pad_date_{invoice_to_edit}")
             new_pad_date = new_pad_date_obj.strftime("%d.%m.%Y")
         with col_edit3:
-            st_idx = 0 if str(item["Статус"]) == "Неплатена" else 1
+            current_st = str(df.loc[idx, "Статус"].values[0]) if len(df.loc[idx, "Статус"]) > 0 else "Неплатена"
+            st_idx = 0 if current_st == "Неплатена" else 1
             new_st = st.selectbox("Статус на плащане:", ["Неплатена", "Платена"], index=st_idx, key=f"status_select_{invoice_to_edit}")
             
         if st.button("💾 Запази промените", key="save_btn"):
-            st.session_state["global_invoices"][idx]["Сума"] = new_amount
-            st.session_state["global_invoices"][idx]["Падеж"] = new_pad_date
-            st.session_state["global_invoices"][idx]["Статус"] = new_st
+            df.loc[idx, "Сума"] = new_amount
+            df.loc[idx, "Падеж"] = new_pad_date
+            df.loc[idx, "Статус"] = new_st
+            df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
             st.success("Промените бяха запазени успешно!")
             st.rerun()
 else:
-    st.info("Дневникът все още е празен. Качете първата си фактура от менюто вляво!")
+    st.info("Дневникът все още е празен.")
