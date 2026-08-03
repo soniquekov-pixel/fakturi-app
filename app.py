@@ -5,9 +5,6 @@ import os
 import re
 from datetime import datetime
 
-# Име на вечния файл, който току-що качихте в GitHub
-DB_FILE = "база_данни.csv"
-
 # --- 0. ЗАЩИТА С ПАРОЛА ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -26,15 +23,19 @@ if not st.session_state["authenticated"]:
             st.error("❌ Грешна парола! Опитайте отново.")
     st.stop()
 
-# Проверка дали файлът съществува
-if not os.path.exists(DB_FILE):
-    st.error(f"⚠️ Грешка: Файлът '{DB_FILE}' не е намерен в GitHub! Моля, проверете името му.")
-    st.stop()
+# ИМЕТО НА ФАЙЛА С АРХИВА В GITHUB
+DB_FILE = "база_данни.csv"
 
-# Зареждане на данните директно от качения CSV файл
-df = pd.read_csv(DB_FILE, dtype={"Номер": str, "Падеж": str, "Сума": str})
+# Инициализиране на постоянната памет на сайта, за да не се трие при рестарт
+if "main_data" not in st.session_state:
+    if os.path.exists(DB_FILE):
+        # Зареждаме заварените 2 месеца с данни от GitHub първоначално
+        st.session_state["main_data"] = pd.read_csv(DB_FILE, dtype={"Номер": str, "Падеж": str, "Сума": str})
+    else:
+        st.session_state["main_data"] = pd.DataFrame(columns=["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"])
 
-# Почистване на заглавията на колоните за всеки случай
+# Взимаме актуалния масив от паметта на сайта
+df = st.session_state["main_data"]
 df.columns = [str(col).strip() for col in df.columns]
 
 # Автоматично хронологично сортиране (водещо по Дата на фактурата)
@@ -42,12 +43,13 @@ if not df.empty and "Дата" in df.columns:
     df['temp_date'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y', errors='coerce')
     df = df.sort_values(by=['temp_date', 'Номер'], ascending=[True, True])
     df = df.drop(columns=['temp_date'])
+    st.session_state["main_data"] = df
 
-# --- 2. ДВУЕЗИЧЕН АЛГОРИТЪМ ЗА ИЗВЛИЧАНЕ ОСТАВА СЪЩИЯ ---
+# --- 2. ДВУЕЗИЧЕН АЛГОРИТЪМ ЗА ИЗВЛИЧАНЕ ОТ БИЗНЕС НАВИГАТОР ---
 def extract_invoice_data(file_bytes):
     with pdfplumber.open(file_bytes) as pdf:
         if len(pdf.pages) > 0:
-            page_text = pdf.pages.extract_text()
+            page_text = pdf.pages[0].extract_text()
         else:
             return None
             
@@ -88,7 +90,7 @@ def extract_invoice_data(file_bytes):
 
         return {"Номер": invoice_number, "Дата": invoice_date, "Сума": invoice_amount, "Клиент": invoice_client, "Падеж": "-", "Статус": "Неплатена"}
 
-# --- 3. ИНТЕРФЕЙС НА УЕБ САЙТА ---
+# --- 3. ИНТЕРФЕЙС НА УЕБ САЙТА (STREAMLIT) ---
 st.set_page_config(page_title="Дневник Фактури", layout="wide")
 st.title("📊 Споделен онлайн дневник за фактури")
 st.write("Система за автоматично извличане на данни от фактури и управление на падежи.")
@@ -115,15 +117,13 @@ if uploaded_file is not None:
                     st.sidebar.warning(f"⚠️ Внимание! Фактура №{current_number} за този клиент вече съществува!")
                 else:
                     new_row = pd.DataFrame([extracted_data])
-                    df = pd.concat([df, new_row], ignore_index=True)
-                    df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
+                    st.session_state["main_data"] = pd.concat([st.session_state["main_data"], new_row], ignore_index=True)
                     st.sidebar.success(f"✅ Фактура №{current_number} е записана успешно!")
                     st.rerun()
 
 # СЕКЦИЯ 2: УПРАВЛЕНИЕ И РЕДАКЦИЯ
 st.header("📋 Списък с обработени фактури")
 
-# Защита на списъка с колони за изобразяване
 available_cols = ["Номер", "Дата", "Сума", "Клиент", "Падеж", "Статус"]
 for col in available_cols:
     if col not in df.columns:
@@ -160,40 +160,40 @@ if not df.empty:
 
     st.dataframe(filtered_df[available_cols].style.map(style_status, subset=["Статус"]), use_container_width=True, hide_index=True)
     
+    # БУТОН ЗА ИЗТЕГЛЯНЕ НА АКТУАЛНИЯ ЕКСЕЛ
     try:
         import io
         towrite = io.BytesIO()
-        df.to_excel(towrite, index=False, header=True, engine='openpyxl')
+        st.session_state["main_data"].to_excel(towrite, index=False, header=True, engine='openpyxl')
         towrite.seek(0)
-        st.download_button(label="📥 Изтегли целия дневник в Excel файл", data=towrite, file_name="Dnevnik_Fakturi_Backup.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(label="📥 Свали актуализирания дневник в Excel файл", data=towrite, file_name="Dnevnik_Fakturi_Aktualen.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     except Exception: pass
 
     st.subheader("✏️ Бърза промяна на данни (Сума / Падеж / Статус)")
     invoice_to_edit = st.selectbox("Изберете номер на фактура за редактиране:", df["Номер"].tolist())
     
     if invoice_to_edit:
-        idx = df[df["Номер"] == invoice_to_edit].index
+        idx = df[df["Номер"] == invoice_to_edit].index[0]
         
         col_edit1, col_edit2, col_edit3 = st.columns(3)
         with col_edit1:
-            current_amount = str(df.loc[idx, "Сума"].values[0]) if len(df.loc[idx, "Сума"]) > 0 else "-"
+            current_amount = str(st.session_state["main_data"].loc[idx, "Сума"])
             new_amount = st.text_input("Сума:", value=current_amount, key=f"amount_{invoice_to_edit}")
         with col_edit2:
-            current_pad_str = str(df.loc[idx, "Падеж"].values[0]) if len(df.loc[idx, "Падеж"]) > 0 else "-"
+            current_pad_str = str(st.session_state["main_data"].loc[idx, "Падеж"])
             try: default_date = datetime.strptime(current_pad_str, "%d.%m.%Y").date()
             except ValueError: default_date = datetime.today().date()
             new_pad_date_obj = st.date_input("Падеж от календара:", value=default_date, key=f"pad_date_{invoice_to_edit}")
             new_pad_date = new_pad_date_obj.strftime("%d.%m.%Y")
         with col_edit3:
-            current_st = str(df.loc[idx, "Статус"].values[0]) if len(df.loc[idx, "Статус"]) > 0 else "Неплатена"
+            current_st = str(st.session_state["main_data"].loc[idx, "Статус"])
             st_idx = 0 if current_st == "Неплатена" else 1
             new_st = st.selectbox("Статус на плащане:", ["Неплатена", "Платена"], index=st_idx, key=f"status_select_{invoice_to_edit}")
             
         if st.button("💾 Запази промените", key="save_btn"):
-            df.loc[idx, "Сума"] = new_amount
-            df.loc[idx, "Падеж"] = new_pad_date
-            df.loc[idx, "Статус"] = new_st
-            df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
+            st.session_state["main_data"].loc[idx, "Сума"] = new_amount
+            st.session_state["main_data"].loc[idx, "Падеж"] = new_pad_date
+            st.session_state["main_data"].loc[idx, "Статус"] = new_st
             st.success("Промените бяха запазени успешно!")
             st.rerun()
 else:
